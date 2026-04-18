@@ -377,6 +377,11 @@ body.sb-collapsed .sidebar{width:0!important;min-width:0!important;overflow:hidd
 </style>
 </head>
 <body>
+<div id="loading-overlay" style="display:none;position:fixed;inset:0;background:rgba(255,255,255,.9);z-index:9999;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+  <div style="width:40px;height:40px;border:3px solid #e0e0e0;border-top-color:#2c2c2c;border-radius:50%;animation:spin .8s linear infinite"></div>
+  <div style="font-size:13px;color:#888;font-family:Inter,sans-serif">Carregando dados...</div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg)}}</style>
 
 <!-- LOGIN -->
 <div id="s-login">
@@ -872,6 +877,213 @@ body.sb-collapsed .sidebar{width:0!important;min-width:0!important;overflow:hidd
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
+// ═══════════════════════════════════════════════════════════
+// SUPABASE INTEGRATION
+// ═══════════════════════════════════════════════════════════
+var SUPA_URL = 'https://pavokgxdumlmlxnczytd.supabase.co';
+var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhdm9rZ3hkdW1sbWx4bmN6eXRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NjA3NjUsImV4cCI6MjA5MjAzNjc2NX0.IaupGohKLYD2eCp_1XrZualgo_gTSQgE0PL3__PeW9Y';
+
+function supaFetch(path, opts) {
+  return fetch(SUPA_URL + '/rest/v1/' + path, Object.assign({
+    headers: {
+      'apikey': SUPA_KEY,
+      'Authorization': 'Bearer ' + SUPA_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    }
+  }, opts || {})).then(function(r) {
+    if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+    var ct = r.headers.get('content-type') || '';
+    return ct.indexOf('json') >= 0 ? r.json() : r.text().then(function() { return []; });
+  });
+}
+
+// ── LOAD ALL DATA FROM SUPABASE ON LOGIN ─────────────────
+function carregarDados() {
+  showLoadingOverlay(true);
+  return Promise.all([
+    supaFetch('unidades?select=*&order=nome'),
+    supaFetch('ucfg?select=*'),
+    supaFetch('Usu%C3%A1rios?select=*&order=nome'),
+    supaFetch('reservas?select=*&order=data.desc&limit=500'),
+    supaFetch('fila?select=*&status=eq.aguardando&order=chegou')
+  ]).then(function(results) {
+    var units   = results[0] || [];
+    var cfgRows = results[1] || [];
+    var users   = results[2] || [];
+    var reservas = results[3] || [];
+    var filaRows = results[4] || [];
+
+    // Populate UNITS
+    UNITS = units.map(function(u) {
+      return {id:u.id, nome:u.nome, apelido:u.apelido, cidade:u.cidade, cor:u.cor, status:u.status};
+    });
+
+    // Populate UCFG
+    UCFG = {};
+    cfgRows.forEach(function(row) {
+      UCFG[row.uid] = row.data || {};
+    });
+    // Default UCFG for units without config
+    UNITS.forEach(function(u) {
+      if (!UCFG[u.id]) UCFG[u.id] = {maxR:30,maxRAlm:30,maxRJan:30,minP:1,maxP:6,minPAlm:1,maxPAlm:6,minPJan:1,maxPJan:6,almoco:true,jantar:true,horario:false,horarios:[],horarioAlm:[],horarioJan:[],areaExt:true,fechados:[],regras:'',emailAssunto:'',emailjsPublicKey:'',emailjsService:'',emailjsTemplate:''};
+    });
+
+    // Populate USERS
+    USERS = users.map(function(u) {
+      return {
+        id: u.id, nome: u.nome, usuario: u.usuario, email: u.email,
+        senha: u.senha, perfil: u.perfil,
+        acessoFila: u.acesso_fila, editarFila: u.editar_fila,
+        unidade: u.unidade, visualiza: u.visualiza || [],
+        acesso: u.ultimo_acesso || ''
+      };
+    });
+
+    // Populate RES
+    RES = reservas.map(function(r) {
+      return {
+        id: r.id, nome: r.nome, tel: r.tel, email: r.email,
+        uid: r.uid, data: r.data, periodo: r.periodo, hora: r.hora,
+        pess: r.pess, area: r.area, obs: r.obs,
+        status: r.status, origem: r.origem, codigo: r.codigo
+      };
+    });
+    nextResId = RES.length > 0 ? Math.max.apply(null, RES.map(function(r){return r.id;})) + 1 : 1;
+
+    // Populate FILA
+    FILA = filaRows.map(function(f) {
+      return {
+        id: f.id, nome: f.nome, tel: f.tel, pess: f.pess,
+        uid: f.uid, prior: f.prior, urgencia: f.urgencia,
+        obs: f.obs, status: f.status,
+        chegou: f.chegou, chamado: f.chamado, saiu: f.saiu
+      };
+    });
+    filaNextId = FILA.length > 0 ? Math.max.apply(null, FILA.map(function(f){return f.id;})) + 1 : 1;
+
+    showLoadingOverlay(false);
+  }).catch(function(e) {
+    showLoadingOverlay(false);
+    console.error('Supabase load error:', e);
+    showToast('Erro ao conectar ao banco de dados. Verifique a conexão.', 'danger');
+    // Show login anyway so user sees something
+    document.getElementById('s-login').classList.remove('hidden');
+  });
+}
+
+// ── LOADING OVERLAY ───────────────────────────────────────
+function showLoadingOverlay(show) {
+  var el = document.getElementById('loading-overlay');
+  if (el) el.style.display = show ? 'flex' : 'none';
+}
+
+// ── DB HELPERS ────────────────────────────────────────────
+var DB = {
+
+  // RESERVAS
+  salvarReserva: function(res, isEdit) {
+    var row = {
+      nome:res.nome, tel:res.tel, email:res.email, uid:res.uid,
+      data:res.data, periodo:res.periodo, hora:res.hora,
+      pess:res.pess, area:res.area, obs:res.obs,
+      status:res.status, origem:res.origem, codigo:res.codigo||null
+    };
+    if (isEdit) {
+      return supaFetch('reservas?id=eq.' + res.id, {
+        method:'PATCH', body: JSON.stringify(row)
+      });
+    } else {
+      return supaFetch('reservas', {
+        method:'POST', body: JSON.stringify(row)
+      }).then(function(rows) {
+        if (rows && rows[0]) res.id = rows[0].id;
+        return rows;
+      });
+    }
+  },
+
+  excluirReserva: function(id) {
+    return supaFetch('reservas?id=eq.' + id, {method:'DELETE'});
+  },
+
+  // UNIDADES
+  salvarUnit: function(unit, isEdit) {
+    var row = {id:unit.id, nome:unit.nome, apelido:unit.apelido, cidade:unit.cidade, cor:unit.cor, status:unit.status};
+    if (isEdit) {
+      return supaFetch('unidades?id=eq.' + unit.id, {method:'PATCH', body:JSON.stringify(row)});
+    } else {
+      return supaFetch('unidades', {method:'POST', body:JSON.stringify(row)});
+    }
+  },
+
+  excluirUnit: function(id) {
+    return supaFetch('unidades?id=eq.' + id, {method:'DELETE'});
+  },
+
+  // UCFG
+  salvarUcfg: function(uid, cfg) {
+    return supaFetch('ucfg?uid=eq.' + uid, {
+      method:'PATCH',
+      headers: {'Prefer': 'return=representation', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json'},
+      body: JSON.stringify({uid:uid, data:cfg})
+    }).then(function(r) {
+      // If no rows updated, insert
+      if (!r || !r.length) {
+        return supaFetch('ucfg', {method:'POST', body:JSON.stringify({uid:uid, data:cfg})});
+      }
+      return r;
+    });
+  },
+
+  // USUÁRIOS
+  salvarUser: function(user, isEdit) {
+    var row = {
+      nome:user.nome, usuario:user.usuario, email:user.email,
+      senha:user.senha, perfil:user.perfil,
+      acesso_fila:user.acessoFila||false,
+      editar_fila:user.editarFila||false,
+      unidade:user.unidade||'',
+      visualiza:user.visualiza||[]
+    };
+    if (isEdit) {
+      return supaFetch('Usu%C3%A1rios?id=eq.' + user.id, {method:'PATCH', body:JSON.stringify(row)});
+    } else {
+      return supaFetch('Usu%C3%A1rios', {method:'POST', body:JSON.stringify(row)}).then(function(rows) {
+        if (rows && rows[0]) user.id = rows[0].id;
+        return rows;
+      });
+    }
+  },
+
+  excluirUser: function(id) {
+    return supaFetch('Usu%C3%A1rios?id=eq.' + id, {method:'DELETE'});
+  },
+
+  // FILA
+  salvarFila: function(entry) {
+    var row = {
+      nome:entry.nome, tel:entry.tel, pess:entry.pess,
+      uid:entry.uid, prior:entry.prior, urgencia:entry.urgencia||false,
+      obs:entry.obs||'', status:entry.status,
+      chegou:entry.chegou
+    };
+    return supaFetch('fila', {method:'POST', body:JSON.stringify(row)}).then(function(rows) {
+      if (rows && rows[0]) entry.id = rows[0].id;
+      return rows;
+    });
+  },
+
+  atualizarFila: function(id, updates) {
+    return supaFetch('fila?id=eq.' + id, {method:'PATCH', body:JSON.stringify(updates)});
+  },
+
+  excluirFila: function(id) {
+    return supaFetch('fila?id=eq.' + id, {method:'DELETE'});
+  }
+};
+
+
 // ─────────────────────────────────────────────
 // DADOS
 // ─────────────────────────────────────────────
@@ -962,8 +1174,11 @@ function doLogin() {
     document.body.classList.remove('can-fila-edit');
   }
   updateSidebarUser();
-  buildActiveUnits();
-  goTo('s-cal');
+  carregarDados().then(function() {
+    buildActiveUnits();
+    applyUnitColors();
+    goTo('s-cal');
+  });
 }
 
 function doLogout() {
@@ -1291,6 +1506,7 @@ function excluirReserva(id) {
   var r = RES.find(function(x){ return x.id === id; }); if (!r) return;
   showConfirm('Excluir reserva', 'Excluir a reserva de ' + r.nome + '? Esta ação não pode ser desfeita.', 'Excluir', function() {
     RES = RES.filter(function(x){ return x.id !== id; });
+    DB.excluirReserva(id).catch(function(e){showToast('Erro ao excluir: '+e.message,'danger');});
     closeModal('m-detail');
     renderList(); renderCal();
     showToast('Reserva excluída.', 'success');
@@ -1626,8 +1842,15 @@ function salvarReserva() {
     if(idx>-1) RES[idx]=Object.assign(RES[idx],{nome:nome,tel:tel,email:email,uid:uid,data:data,periodo:periodo,hora:hora,pess:pess,area:area,obs:obs});
     showToast('Reserva atualizada!','success');
   } else {
-    var novaRes = {id:nextResId++,nome:nome,tel:tel,email:email,uid:uid,data:data,periodo:periodo,hora:hora,pess:pess,area:area,status:'Confirmada',origem:origem,obs:obs};
-    RES.push(novaRes);
+    var isEdit = (editResId !== null);
+    var novaRes = {id:isEdit?editResId:nextResId++,nome:nome,tel:tel,email:email,uid:uid,data:data,periodo:periodo,hora:hora,pess:pess,area:area,status:'Confirmada',origem:origem,obs:obs};
+    if (isEdit) {
+      var idx = RES.findIndex(function(r){return r.id===editResId;});
+      if (idx>=0) RES[idx] = novaRes;
+    } else {
+      RES.push(novaRes);
+    }
+    DB.salvarReserva(novaRes, isEdit).catch(function(e){showToast('Erro ao salvar no banco: '+e.message,'danger');});
     if (window._forcarEmail) {
       // Validate email before trying to send
       if (!email || email.indexOf('@') < 1) {
@@ -1780,6 +2003,9 @@ function salvarUsuario() {
     USERS.push({id:nextUserId++,nome:nome,usuario:usuario,email:email,senha:senha,perfil:perfil,unidade:unidade,visualiza:visualiza,acessoFila:acessoFila,editarFila:editarFila,acesso:'Nunca'});
     showToast('Usuario cadastrado!','success');
   }
+  var isEditU = !!document.getElementById('u-id').value;
+  var savedUser = isEditU ? USERS.find(function(u){return u.id===parseInt(document.getElementById('u-id').value);}) : USERS[USERS.length-1];
+  if (savedUser) DB.salvarUser(savedUser, isEditU).catch(function(e){showToast('Erro ao salvar usuário: '+e.message,'danger');});
   closeModal('m-user'); renderUsers();
 }
 
@@ -1853,6 +2079,9 @@ function salvarUnidade() {
     }
     showToast('Unidade "'+nome+'" cadastrada!','success');
   }
+  var isEditUnit = !!editId;
+  var unitObj = UNITS.find(function(u){return u.id===(editId||newId);});
+  if (unitObj) DB.salvarUnit(unitObj, isEditUnit).catch(function(e){showToast('Erro ao salvar unidade: '+e.message,'danger');});
   closeModal('m-unit'); applyUnitColors(); renderUnits(); rebuildActiveUnits(); rebuildAddUnitSelect();
 }
 
@@ -1876,7 +2105,7 @@ function myVisUnits() {
 function excluirUnidade(id) {
   var u=UNITS.find(function(x){return x.id===id;}); if(!u) return;
   showConfirm('Excluir unidade','Deseja excluir "'+u.nome+'"? Esta acao nao pode ser desfeita.','Excluir',function(){
-    UNITS=UNITS.filter(function(x){return x.id!==id;}); delete UCFG[id]; applyUnitColors(); renderUnits(); rebuildActiveUnits(); showToast('Unidade excluida.','danger');
+    UNITS=UNITS.filter(function(x){return x.id!==id;}); delete UCFG[id]; DB.excluirUnit(id).catch(function(e){console.error(e);}); applyUnitColors(); renderUnits(); rebuildActiveUnits(); showToast('Unidade excluida.','danger');
   });
 }
 
@@ -2241,6 +2470,7 @@ function salvarCfg(uid) {
     emailjsService:gv('cfgr-'+uid+'-ejsvc'),
     emailjsTemplate:gv('cfgr-'+uid+'-ejtpl'),
     fechados:prevFechados};
+  DB.salvarUcfg(uid, UCFG[uid]).catch(function(e){showToast('Erro ao salvar config: '+e.message,'danger');});
   var u=UNITS.find(function(x){return x.id===uid;});
   showToast('Configurações de "'+(u?u.nome:uid)+'" salvas!','success');
 }
@@ -2368,12 +2598,12 @@ function salvarFila() {
   if (urgencia) prior = true;
   var entrada = { id:filaNextId++, nome:nome, tel:tel, pess:pess, uid:uid, prior:prior, urgencia:urgencia, obs:obs, chegou:tsNow(), chamado:null, saiu:null, status:'aguardando' };
   if (urgencia) {
-    FILA.unshift(entrada); // vai para o início — frente de toda a fila
-    // Ajusta turn para que urgência seja chamada primeiro
-    FILA_CALL_TURN = 'normal'; // prior vai ser chamado a seguir
+    FILA.unshift(entrada);
+    FILA_CALL_TURN = 'normal';
   } else {
     FILA.push(entrada);
   }
+  DB.salvarFila(entrada).catch(function(e){showToast('Erro ao salvar na fila: '+e.message,'danger');});
   closeModal('m-fila');
   renderFila();
   var filaType = urgencia ? '⚡ extrema urgência' : prior ? 'prioritária' : 'normal';
@@ -2417,6 +2647,7 @@ function chamarFila(id) {
   FILA.splice(idx,1); FILA_HIST.push(p);
   renderFila();
   renderGraf();
+  DB.atualizarFila(p.id,{status:'chamado',chamado:p.chamado}).catch(function(e){console.error(e);});
   showToast(p.nome+' foi chamado(a)! Espera: '+diffMin(p.chegou,p.chamado)+' min.','success');
 }
 
@@ -2884,11 +3115,33 @@ function importarReservasPendentes() {
 }
 
 applyUnitColors();
-initLogin();
 startFilaClock();
-seedGrafDemoData();
-importarReservasPendentes();
 var _now = new Date(); grafY = _now.getFullYear(); grafM = _now.getMonth();
+
+// Carrega usuários do banco antes de liberar o login
+showLoadingOverlay(true);
+supaFetch('Usu%C3%A1rios?select=id,nome,usuario,email,senha,perfil,acesso_fila,editar_fila,unidade,visualiza,ultimo_acesso')
+  .then(function(rows) {
+    USERS = (rows || []).map(function(u) {
+      return {
+        id: u.id, nome: u.nome, usuario: u.usuario, email: u.email,
+        senha: u.senha, perfil: u.perfil,
+        acessoFila: u.acesso_fila || false,
+        editarFila: u.editar_fila || false,
+        unidade: u.unidade || 'Todas',
+        visualiza: u.visualiza || [],
+        acesso: u.ultimo_acesso || ''
+      };
+    });
+    showLoadingOverlay(false);
+    initLogin();
+  })
+  .catch(function(e) {
+    showLoadingOverlay(false);
+    console.error('Erro ao carregar usuários:', e);
+    showToast('Erro ao conectar ao banco. Verifique a conexão.', 'danger');
+    initLogin();
+  });
 </script>
 </body>
 </html>
