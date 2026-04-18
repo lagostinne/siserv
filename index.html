@@ -899,6 +899,19 @@ function supaFetch(path, opts) {
 }
 
 // ── LOAD ALL DATA FROM SUPABASE ON LOGIN ─────────────────
+
+// Normalize date from Supabase — always returns 'YYYY-MM-DD' regardless of timezone
+function normalizeDate(d) {
+  if (!d) return d;
+  var s = String(d);
+  // If it has a T (timestamp), split and take the date part
+  if (s.indexOf('T') >= 0) return s.split('T')[0];
+  // If it has a space (some DBs use '2026-04-30 00:00:00'), take before space
+  if (s.indexOf(' ') >= 0) return s.split(' ')[0];
+  // Already just a date string
+  return s.substring(0, 10);
+}
+
 function carregarDados() {
   showLoadingOverlay(true);
   return Promise.all([
@@ -944,7 +957,7 @@ function carregarDados() {
     RES = reservas.map(function(r) {
       return {
         id: r.id, nome: r.nome, tel: r.tel, email: r.email,
-        uid: r.uid, data: r.data ? String(r.data).substring(0,10) : r.data, periodo: r.periodo, hora: r.hora,
+        uid: r.uid, data: normalizeDate(r.data), periodo: r.periodo, hora: r.hora,
         pess: r.pess, area: r.area, obs: r.obs,
         status: r.status, origem: r.origem, codigo: r.codigo
       };
@@ -3108,7 +3121,7 @@ function enviarEmailReserva(res) {
 // ─────────────────────────────────────────────
 function receberReservaOnline(res) {
   // Normalize date — strip time part if present
-  if (res.data) res.data = String(res.data).substring(0, 10);
+  if (res.data) res.data = normalizeDate(res.data);
   // Avoid duplicates by checking codigo
   var jaExiste = RES.some(function(r){ return r.codigo && r.codigo === res.codigo; });
   if (jaExiste) return;
@@ -3140,7 +3153,7 @@ function importarReservasPendentes() {
     var importadas = 0;
     pending.forEach(function(res) {
       // Normalize date
-      if (res.data) res.data = String(res.data).substring(0, 10);
+      if (res.data) res.data = normalizeDate(res.data);
       // Avoid duplicates by checking codigo
       var jaExiste = RES.some(function(r){ return r.codigo && r.codigo === res.codigo; });
       if (!jaExiste) {
