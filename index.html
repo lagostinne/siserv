@@ -806,8 +806,8 @@ body.sb-collapsed .sidebar{width:0!important;min-width:0!important;overflow:hidd
       <div id="u-fields-usuario">
         <div class="mfg"><label class="mfl">Usuário *</label><input class="mfi" type="text" id="u-usuario" placeholder="nome de login" autocomplete="off"></div>
         <div class="mfg"><label class="mfl">Senha *</label><input class="mfi" type="password" id="u-senha" placeholder="Mínimo 4 caracteres" autocomplete="new-password"></div>
-        <div class="mfg"><label class="mfl">Unidade principal</label><select class="mfi" id="u-unit"></select></div>
-        <div class="mfg"><label class="mfl">Unidades visíveis</label>
+        <div id="u-unit-group" class="mfg"><label class="mfl">Unidade principal *</label><select class="mfi" id="u-unit"></select></div>
+        <div id="u-vis-group" class="mfg"><label class="mfl">Unidades visíveis</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px">
             <input type="checkbox" id="u-vis-all" onchange="toggleVisAll(this)"> Ver todas as unidades
           </label>
@@ -944,7 +944,7 @@ function carregarDados() {
     RES = reservas.map(function(r) {
       return {
         id: r.id, nome: r.nome, tel: r.tel, email: r.email,
-        uid: r.uid, data: r.data, periodo: r.periodo, hora: r.hora,
+        uid: r.uid, data: r.data ? String(r.data).substring(0,10) : r.data, periodo: r.periodo, hora: r.hora,
         pess: r.pess, area: r.area, obs: r.obs,
         status: r.status, origem: r.origem, codigo: r.codigo
       };
@@ -1936,14 +1936,28 @@ function openEditUsuario(id) {
 }
 
 function togglePerfilFields() {
-  var p=document.getElementById('u-perfil').value;
-  document.getElementById('u-fields-usuario').style.display=(p==='admin')?'none':'block';
+  var p = document.getElementById('u-perfil').value;
+  var isAdmin = (p === 'admin');
+  // Always show login fields (usuario, senha)
+  document.getElementById('u-fields-usuario').style.display = 'block';
+  // Hide unidade/visibilidade for admin (they have full access)
+  var uUnit = document.getElementById('u-unit-group');
+  var uVis  = document.getElementById('u-vis-group');
+  if (uUnit) uUnit.style.display = isAdmin ? 'none' : 'block';
+  if (uVis)  uVis.style.display  = isAdmin ? 'none' : 'block';
+  // Admin auto-gets all access
+  if (isAdmin) {
+    var af = document.getElementById('u-acesso-fila');
+    var ef = document.getElementById('u-editar-fila');
+    if (af) af.checked = true;
+    if (ef) ef.checked = true;
+  }
 }
 
 function rebuildUserUnitSelect(curVal) {
   var sel=document.getElementById('u-unit'); if(!sel) return;
   sel.innerHTML='<option value="">Selecione</option>';
-  myVisUnits().forEach(function(u){ sel.innerHTML+='<option value="'+u.id+'">'+u.nome+'</option>'; });
+  UNITS.forEach(function(u){ sel.innerHTML+='<option value="'+u.id+'">'+u.nome+'</option>'; });
   sel.value=curVal;
 }
 
@@ -1981,20 +1995,24 @@ function salvarUsuario() {
   var senha   =document.getElementById('u-senha').value;
   var perfil  =document.getElementById('u-perfil').value;
   var editId  =parseInt(document.getElementById('u-id').value||'0');
-  var unidade =(perfil==='admin')?'Todas':(document.getElementById('u-unit').value||'');
-  var visualiza=getVisIds();
-  var acessoFila  = document.getElementById('u-acesso-fila')  ? document.getElementById('u-acesso-fila').checked  : false;
-  var editarFila  = document.getElementById('u-editar-fila')   ? document.getElementById('u-editar-fila').checked   : false;
+  var isAdmin = (perfil === 'admin');
+  // Admin defaults — set before validation so checks pass
+  var unidade  = isAdmin ? 'Todas' : (document.getElementById('u-unit').value||'');
+  var visualiza = isAdmin
+    ? UNITS.map(function(u){ return u.id; })
+    : getVisIds();
+  var acessoFila = isAdmin ? true : (document.getElementById('u-acesso-fila') ? document.getElementById('u-acesso-fila').checked : false);
+  var editarFila = isAdmin ? true : (document.getElementById('u-editar-fila') ? document.getElementById('u-editar-fila').checked : false);
+  // Validations
   if(!nome)    {showToast('Informe o nome completo.','warning');return;}
-  if(!usuario) {showToast('Informe o nome de usuario.','warning');return;}
-  if(USERS.find(function(u){return u.usuario===usuario&&u.id!==editId;})) {showToast('Nome de usuario ja existe. Escolha outro.','warning');return;}
+  if(!usuario) {showToast('Informe o nome de usuário (login).','warning');return;}
+  if(USERS.find(function(u){return u.usuario===usuario&&u.id!==editId;})) {showToast('Nome de usuário já existe. Escolha outro.','warning');return;}
   if(!email)   {showToast('Informe o e-mail.','warning');return;}
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {showToast('E-mail invalido. Use o formato usuario@dominio.com','warning');return;}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {showToast('E-mail inválido.','warning');return;}
   if(!editId&&!senha) {showToast('Informe a senha.','warning');return;}
-  if(!editId&&senha.length<4) {showToast('A senha deve ter no mínimo 4 caracteres.','warning');return;}
-  if(editId&&senha&&senha.length<4) {showToast('A nova senha deve ter no mínimo 4 caracteres.','warning');return;}
-  if((perfil==='usuario'||perfil==='visualizacao')&&!unidade) {showToast('Selecione a unidade de trabalho.','warning');return;}
-  if(visualiza.length===0) {showToast('Selecione ao menos uma unidade para visualizar.','warning');return;}
+  if(senha && senha.length < 4) {showToast('A senha deve ter no mínimo 4 caracteres.','warning');return;}
+  if(!isAdmin && !unidade) {showToast('Selecione a unidade de trabalho.','warning');return;}
+  if(!isAdmin && visualiza.length===0) {showToast('Selecione ao menos uma unidade para visualizar.','warning');return;}
   if(editId) {
     var idx=USERS.findIndex(function(u){return u.id===editId;});
     if(idx>-1){var upd=Object.assign({},USERS[idx],{nome:nome,usuario:usuario,email:email,perfil:perfil,unidade:unidade,visualiza:visualiza,acessoFila:acessoFila,editarFila:editarFila}); if(senha) upd.senha=senha; USERS[idx]=upd;}
@@ -2507,7 +2525,15 @@ function openModal(id) { var el=document.getElementById(id); if(el) el.classList
 function closeModal(id){ var el=document.getElementById(id); if(el) el.classList.remove('open'); }
 
 document.querySelectorAll('.modal-bg').forEach(function(m){
-  m.addEventListener('click',function(e){ if(e.target===this) this.classList.remove('open'); });
+  var _mouseDownTarget = null;
+  m.addEventListener('mousedown', function(e){ _mouseDownTarget = e.target; });
+  m.addEventListener('click', function(e){
+    // Only close if BOTH mousedown AND click happened directly on the backdrop
+    if (e.target === this && _mouseDownTarget === this) {
+      this.classList.remove('open');
+    }
+    _mouseDownTarget = null;
+  });
 });
 
 function showConfirm(title,msg,btnLabel,onOk) {
@@ -3081,16 +3107,27 @@ function enviarEmailReserva(res) {
 // RECEBER RESERVAS DO FORMULÁRIO ONLINE
 // ─────────────────────────────────────────────
 function receberReservaOnline(res) {
+  // Normalize date — strip time part if present
+  if (res.data) res.data = String(res.data).substring(0, 10);
+  // Avoid duplicates by checking codigo
+  var jaExiste = RES.some(function(r){ return r.codigo && r.codigo === res.codigo; });
+  if (jaExiste) return;
   // Assign a proper sequential ID
   res.id = nextResId++;
-  // Ensure full unit name
   var u = UNITS.find(function(x){ return x.id === res.uid; });
   res.full = u ? u.nome : res.uid;
   RES.push(res);
+  // Save to Supabase
+  DB.salvarReserva(res, false).catch(function(e){ console.error('Erro ao salvar reserva online:', e); });
+  // Clear from localStorage to prevent duplicate via importarReservasPendentes
+  try {
+    var pending = JSON.parse(localStorage.getItem('lagostinne_pending_res') || '[]');
+    var filtered = pending.filter(function(p){ return p.codigo !== res.codigo; });
+    localStorage.setItem('lagostinne_pending_res', JSON.stringify(filtered));
+  } catch(e) {}
   renderCal();
   renderList();
   showToast('Nova reserva online: ' + res.nome + ' (' + (u ? u.apelido : res.uid) + ')', 'success');
-  // Send confirmation email if configured
   if (res.email && res.email.indexOf('@') > 0) {
     enviarEmailReserva(res);
   }
@@ -3102,8 +3139,10 @@ function importarReservasPendentes() {
     if (!pending.length) return;
     var importadas = 0;
     pending.forEach(function(res) {
+      // Normalize date
+      if (res.data) res.data = String(res.data).substring(0, 10);
       // Avoid duplicates by checking codigo
-      var jaExiste = RES.some(function(r){ return r.codigo === res.codigo; });
+      var jaExiste = RES.some(function(r){ return r.codigo && r.codigo === res.codigo; });
       if (!jaExiste) {
         receberReservaOnline(res);
         importadas++;
