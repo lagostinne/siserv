@@ -754,18 +754,44 @@ function confirmarReserva() {
     codigo:  code
   };
 
-  // Save to localStorage so the admin panel can pick it up
-  try {
-    var pending = JSON.parse(localStorage.getItem('lagostinne_pending_res') || '[]');
-    pending.push(novaRes);
-    localStorage.setItem('lagostinne_pending_res', JSON.stringify(pending));
-  } catch(e) { console.warn('localStorage unavailable', e); }
+  // Salvar direto no Supabase
+  var rowRes = {
+    nome: novaRes.nome, tel: novaRes.tel, email: novaRes.email,
+    uid: novaRes.uid, data: novaRes.data, periodo: novaRes.periodo,
+    hora: novaRes.hora, pess: novaRes.pess, area: novaRes.area,
+    obs: novaRes.obs, status: novaRes.status,
+    origem: novaRes.origem, codigo: novaRes.codigo
+  };
+  fetch(SUPA_URL + '/rest/v1/reservas', {
+    method: 'POST',
+    headers: {
+      'apikey': SUPA_KEY,
+      'Authorization': 'Bearer ' + SUPA_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: JSON.stringify(rowRes)
+  }).then(function(r) {
+    return r.json();
+  }).then(function(rows) {
+    if (rows && rows[0]) novaRes.id = rows[0].id;
+    console.log('Reserva salva no banco:', novaRes.codigo);
+  }).catch(function(e) {
+    console.error('Erro ao salvar reserva:', e);
+  });
 
-  // If admin window is open (same origin), call its function directly
+  // Tentar notificar admin se estiver aberto
   try {
     if (window.opener && window.opener.receberReservaOnline) {
       window.opener.receberReservaOnline(novaRes);
     }
+  } catch(e) {}
+
+  // Fallback: localStorage
+  try {
+    var pending = JSON.parse(localStorage.getItem('lagostinne_pending_res') || '[]');
+    pending.push(novaRes);
+    localStorage.setItem('lagostinne_pending_res', JSON.stringify(pending));
   } catch(e) {}
 
   document.getElementById('success-summary').innerHTML = [
